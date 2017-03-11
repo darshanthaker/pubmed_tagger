@@ -38,7 +38,7 @@ class NCBIScraper(object):
         id_list = list()
         for ids in id_list_tag:
             id_list.append(ids.text)
-        self.fetch_data(id_list)
+        self.fetch_external_links(id_list)
 
     def fetch_data(self, id_list):
         base_url = self.base_url.format('efetch')
@@ -57,6 +57,29 @@ class NCBIScraper(object):
                 data[id_list[i]] = abstract_text
             i += 1
         print(data)
+
+    def fetch_external_links(self, id_list):
+        base_url = self.base_url.format('elink')
+        data = dict()
+        query_params = dict()
+        query_params['dbfrom'] = self.db
+        query_params['id'] = '28278500'
+        #query_params['id'] = ','.join(id_list)
+        query_params['cmd'] = 'prlinks'
+        eLinkResult = self.wget(base_url, query_params)
+        url_list = self.bfs_find(eLinkResult, 'IdUrlList')
+        for url_set in url_list:
+            assert url_set.tag == 'IdUrlSet'
+            id, url = self.parse_url_set(url_set)
+            self.parse_url(url)
+
+    def parse_url(self, url):
+        pass
+
+    def parse_url_set(self, url_set):
+        id = self.bfs_find(url_set, 'Id').text
+        url = self.bfs_find(url_set, 'Url').text
+        return id, url
 
     def parse_article(self, article):
         try:
