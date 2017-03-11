@@ -42,20 +42,31 @@ class NCBIScraper(object):
 
     def fetch_data(self, id_list):
         base_url = self.base_url.format('efetch')
-        test_id = '28277836'
+        data = dict()
         query_params = dict() 
         query_params['db'] = self.db
-        query_params['id'] = test_id
+        query_params['id'] = ','.join(id_list)
         query_params['retmode'] = 'xml'
         pubmedArticleSet = self.wget(base_url, query_params)
+        i = 0
         for article in pubmedArticleSet:
-            self.parse_article(article)
+            if article.tag == 'PubmedArticle':
+                year, abstract_text = self.parse_article(article)
+                if year is None and abstract_text is None:
+                    continue
+                data[id_list[i]] = abstract_text
+            i += 1
+        print(data)
 
     def parse_article(self, article):
-        date_revised_tag = self.bfs_find(article, 'DateRevised')
-        year = date_revised_tag[0].text
-        abstract_text_tag = self.bfs_find(article, 'AbstractText')
-        abstract_text = abstract_text_tag.text
+        try:
+            date_revised_tag = self.bfs_find(article, 'DateRevised')
+            year = date_revised_tag[0].text
+            abstract_text_tag = self.bfs_find(article, 'AbstractText')
+            abstract_text = abstract_text_tag.text
+        except:
+            return None, None
+        return year, abstract_text
          
 def main():
     scraper = NCBIScraper('pubmed')
