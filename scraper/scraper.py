@@ -11,24 +11,52 @@ class NCBIScraper(object):
 
     def __init__(self, db):
         self.db = db
-        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?"
+        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
+
+    def wget(self, url, params):
+        encoded_params = urllib.parse.urlencode(params)
+        response = urllib.request.urlopen(url + encoded_params)
+        xml = response.read().decode('utf-8')
+        root = ET.fromstring(xml)
+        return root
+
+    def bfs_find(self, root, to_find):
+        queue = [root]
+        while len(queue) > 0:
+            node = queue.pop(0)
+            if node.tag == to_find:
+                return node
+            for neighbor in node:
+                queue.append(neighbor)
 
     def search(self, query_params):
         assert isinstance(query_params, dict)
+        base_url = self.base_url.format('esearch')
         query_params['db'] = self.db
-        encoded_params = urllib.parse.urlencode(query_params)
-        response = urllib.request.urlopen(self.base_url + encoded_params)
-        html = response.read().decode('utf-8')
-        tree = ET.fromstring(html)
-        idlist_tag = tree.find('IdList')
-        idlist = list()
-        for child in idlist_tag:
-            idlist.append(child.text)
-        self.fetch(idlist)
+        eSearchResult = self.wget(base_url, query_params)
+        id_list_tag = eSearchResult.find('IdList')
+        id_list = list()
+        for ids in id_list_tag:
+            id_list.append(ids.text)
+        self.fetch_data(id_list)
 
-    def fetch(self, idlist):
-        pass
+    def fetch_data(self, id_list):
+        base_url = self.base_url.format('efetch')
+        test_id = '28277836'
+        query_params = dict() 
+        query_params['db'] = self.db
+        query_params['id'] = test_id
+        query_params['retmode'] = 'xml'
+        pubmedArticleSet = self.wget(base_url, query_params)
+        for article in pubmedArticleSet:
+            self.parse_article(article)
 
+    def parse_article(self, article):
+        date_revised_tag = self.bfs_find(article, 'DateRevised')
+        year = date_revised_tag[0].text
+        abstract_text_tag = self.bfs_find(article, 'AbstractText')
+        abstract_text = abstract_text_tag.text
+         
 def main():
     scraper = NCBIScraper('pubmed')
     scraper.search({'term': 'cancer', 'retmax': 100})
