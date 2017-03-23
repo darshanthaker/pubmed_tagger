@@ -1,12 +1,12 @@
 import sys
-# In order to import urllib.request successfully.
-if sys.version_info < (3, 1):
-    raise Exception("Program must be run with Python3. Rerun please.")
-import urllib.request
-import urllib.parse
+#if sys.version_info < (3, 1):
+#    raise Exception("Program must be run with Python3. Rerun please.")
+import urllib2
+import urllib
+from urlparse import urlparse
 import requests
 import xml.etree.ElementTree as ET
-from html.parser import HTMLParser
+from HTMLParser import HTMLParser
 from pdb import set_trace
 
 class NCBIScraper(object):
@@ -16,11 +16,11 @@ class NCBIScraper(object):
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
 
     def wget(self, url, params):
-        encoded_params = urllib.parse.urlencode(params)
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+        encoded_params = urllib.urlencode(params)
+        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor())
         response = opener.open(url + encoded_params)
-        #response = urllib.request.urlopen(url + encoded_params)
-        return response.read().decode('utf-8'), response.geturl()
+        resp = response.read()
+        return resp, response.geturl()
 
     def wget_xml(self, url, params):
         xml, _ = self.wget(url, params) 
@@ -85,7 +85,7 @@ class NCBIScraper(object):
         pdf_parser = PDFHTMLParser()
         response, redirect_url = self.wget(url, {})
         pdf_parser.feed(response)
-        parsed_url = urllib.parse.urlparse(redirect_url)
+        parsed_url = urlparse(redirect_url)
         final_url = '{uri.scheme}://{uri.netloc}/'.format(uri=parsed_url)
         if not pdf_parser.href.startswith(final_url):
             final_url += pdf_parser.href 
