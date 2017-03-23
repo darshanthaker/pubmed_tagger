@@ -3,10 +3,12 @@ import sys
 #    raise Exception("Program must be run with Python3. Rerun please.")
 import urllib2
 import urllib
+import slate
 from urlparse import urlparse
 import requests
 import xml.etree.ElementTree as ET
 from HTMLParser import HTMLParser
+from cStringIO import StringIO
 from pdb import set_trace
 
 class NCBIScraper(object):
@@ -93,8 +95,12 @@ class NCBIScraper(object):
             final_url = pdf_parser.href
         print(final_url)
         req = requests.get(final_url)
-        myfile = open('out.pdf', 'wb')
-        myfile.write(req.content)
+        pdf = StringIO(req.content)
+        self.parse_pdf(pdf)
+
+    def parse_pdf(self, pdf):
+        doc = slate.PDF(pdf)
+        set_trace()
 
     def parse_url_set(self, url_set):
         id = self.bfs_find(url_set, 'Id').text
