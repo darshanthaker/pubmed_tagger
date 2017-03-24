@@ -42,6 +42,9 @@ class MongoWrapper(object):
         posts = self.db.posts
         post_id = posts.insert_one(entry).inserted_id
 
+    def clear_all(self):
+        self.db.posts.delete_many({})
+
 def main():
     db = MongoWrapper('articles5')
     db.add_entry({"name": "dbthaker"})
