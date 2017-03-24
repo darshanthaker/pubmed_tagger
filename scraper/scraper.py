@@ -29,7 +29,7 @@ class NCBIScraper(object):
         try:
             response = opener.open(url + encoded_params)
         except Exception as e: 
-            print("HTTP Error {}. URL: {}".format(e, url))
+            print("HTTP Error {}. URL: {}".format(e, url + encoded_params))
             return None, None
         resp = response.read()
         return resp, response.geturl()
@@ -99,6 +99,8 @@ class NCBIScraper(object):
         for url_set in url_list:
             assert url_set.tag == 'IdUrlSet'
             id, url = self.parse_url_set(url_set)
+            if url is None:
+                continue
             self.parse_url(url)
 
     def parse_url(self, url):
@@ -121,7 +123,11 @@ class NCBIScraper(object):
         else:
             final_url = href
         print("Added: {}".format(final_url))
-        req = requests.get(final_url)
+        try:
+            req = requests.get(final_url)
+        except requests.exceptions.ConnectionError as e:
+            print("Connection Error in getting pdf")
+            return
         pdf = StringIO(req.content)
         #self.dbify(pdf)
 
@@ -141,7 +147,9 @@ class NCBIScraper(object):
 
     def parse_url_set(self, url_set):
         id = self.bfs_find(url_set, 'Id').text
-        url = self.bfs_find(url_set, 'Url').text
+        url = self.bfs_find(url_set, 'Url')
+        if url is not None:
+            url = url.text
         return id, url
 
     def parse_article(self, article):
