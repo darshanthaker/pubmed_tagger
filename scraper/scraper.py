@@ -11,10 +11,13 @@ from HTMLParser import HTMLParser
 from cStringIO import StringIO
 from pdb import set_trace
 
+from database import MongoWrapper
+
 class NCBIScraper(object):
 
     def __init__(self, db):
         self.db = db
+        self.mongodb = MongoWrapper('test_db')
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
 
     def wget(self, url, params):
@@ -96,11 +99,13 @@ class NCBIScraper(object):
         print(final_url)
         req = requests.get(final_url)
         pdf = StringIO(req.content)
-        self.parse_pdf(pdf)
+        self.dbify(pdf)
 
-    def parse_pdf(self, pdf):
+    def dbify(self, pdf):
         doc = slate.PDF(pdf)
-        set_trace()
+        doc = ' '.join(doc)
+        entry = {'data': doc}
+        self.mongodb.add_entry(entry)
 
     def parse_url_set(self, url_set):
         id = self.bfs_find(url_set, 'Id').text
