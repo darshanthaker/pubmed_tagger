@@ -14,19 +14,18 @@ from pdb import set_trace
 
 from database import MongoWrapper
 
-class NCBIScraper(object):
+class GenericScraper(object):
 
-    def __init__(self, db):
-        self.db = db
-        self.successful = 0
+    def __init__(self):
         self.mongodb = MongoWrapper('test_db')
         # TODO: Remove the following line after testing!!
         self.mongodb.clear_all()
-        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
 
-    def wget(self, url, params):
+    def wget(self, url, params, headers=None):
         encoded_params = urllib.urlencode(params)
         opener = urllib2.build_opener(urllib2.HTTPCookieProcessor())
+        if headers is not None:
+            opener.addheaders = headers
         try:
             response = opener.open(url + encoded_params)
         except Exception as e: 
@@ -42,14 +41,41 @@ class NCBIScraper(object):
         root = ET.fromstring(xml)
         return root
 
-    def bfs_find(self, root, to_find):
-        queue = [root]
-        while len(queue) > 0:
-            node = queue.pop(0)
-            if node.tag == to_find:
-                return node
-            for neighbor in node:
-                queue.append(neighbor)
+    def parse_html(self, data):
+        soup = BeautifulSoup(data, 'lxml')
+        links = soup.find_all('a')
+        for link in links:
+            href = link.get('href')
+            if href is not None and 'pdf' in href:
+                return href
+
+    def parse_pdf(self, pdf):
+        doc = slate.PDF(pdf)
+        doc = ' '.join(doc)
+        entry = {'data': doc}
+        self.mongodb.add_entry(entry)
+
+class ElsevierScraper(GenericScraper):
+
+    def __init__(self):
+        super().__init__()
+        self.base_url = 'https://api.elsevier.com/content/article/pii/{}'    
+        self.api_key = 'c989efb8e4d2c0474a3c4fa3007d2b72'
+
+    def get_pii(self, url):
+        pass
+
+    def parse_url(self, url):
+        assert 'elsevier' in url
+        pii = self.get_pii(url)
+
+class NCBIScraper(GenericScraper):
+
+    def __init__(self, db):
+        super(NCBIScraper, self).__init__()
+        self.db = db
+        self.successful = 0
+        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
 
     def search(self, query_params):
         assert isinstance(query_params, dict)
@@ -64,6 +90,15 @@ class NCBIScraper(object):
             id_list.append(ids.text)
         self.fetch_abstracts(id_list)
         self.fetch_external_links(id_list)
+
+    def bfs_find(self, root, to_find):
+        queue = [root]
+        while len(queue) > 0:
+            node = queue.pop(0)
+            if node.tag == to_find:
+                return node
+            for neighbor in node:
+                queue.append(neighbor)
 
     def fetch_abstracts(self, id_list):
         base_url = self.base_url.format('efetch')
@@ -131,21 +166,7 @@ class NCBIScraper(object):
         pdf = StringIO(req.content)
         print("Added: {}".format(final_url))
         self.successful += 1
-        #self.dbify(pdf)
-
-    def parse_html(self, data):
-        soup = BeautifulSoup(data, 'lxml')
-        links = soup.find_all('a')
-        for link in links:
-            href = link.get('href')
-            if href is not None and 'pdf' in href:
-                return href
-
-    def dbify(self, pdf):
-        doc = slate.PDF(pdf)
-        doc = ' '.join(doc)
-        entry = {'data': doc}
-        self.mongodb.add_entry(entry)
+        #self.parse_pdf(pdf)
 
     def parse_url_set(self, url_set):
         id = self.bfs_find(url_set, 'Id').text
@@ -163,17 +184,6 @@ class NCBIScraper(object):
         except:
             return None, None
         return year, abstract_text
-
-class PDFHTMLParsertmp(HTMLParser):
-
-    def __init__(self):
-        HTMLParser.__init__(self)
-        self.href = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == 'a' and any('pdf' in t for a in attrs for t in a):
-            href_ind = [x[0] for x in attrs].index('href')
-            self.href = attrs[href_ind][1]
 
 def main():
     scraper = NCBIScraper('pubmed')
