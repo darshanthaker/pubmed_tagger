@@ -18,6 +18,7 @@ class NCBIScraper(object):
 
     def __init__(self, db):
         self.db = db
+        self.successful = 0
         self.mongodb = MongoWrapper('test_db')
         # TODO: Remove the following line after testing!!
         self.mongodb.clear_all()
@@ -61,10 +62,10 @@ class NCBIScraper(object):
         id_list = list()
         for ids in id_list_tag:
             id_list.append(ids.text)
-        self.fetch_data(id_list)
+        self.fetch_abstracts(id_list)
         self.fetch_external_links(id_list)
 
-    def fetch_data(self, id_list):
+    def fetch_abstracts(self, id_list):
         base_url = self.base_url.format('efetch')
         data = dict()
         query_params = dict() 
@@ -122,13 +123,14 @@ class NCBIScraper(object):
             final_url += href 
         else:
             final_url = href
-        print("Added: {}".format(final_url))
         try:
             req = requests.get(final_url)
         except requests.exceptions.ConnectionError as e:
-            print("Connection Error in getting pdf")
+            print("Connection Error in getting pdf from {}".format(final_url))
             return
         pdf = StringIO(req.content)
+        print("Added: {}".format(final_url))
+        self.successful += 1
         #self.dbify(pdf)
 
     def parse_html(self, data):
@@ -175,7 +177,8 @@ class PDFHTMLParsertmp(HTMLParser):
 
 def main():
     scraper = NCBIScraper('pubmed')
-    scraper.search({'term': 'cancer', 'retmax': 100})
+    scraper.search({'term': 'stillbirth', 'retmax': 100})
+    print("Retrieved {}/100 successfully".format(scraper.successful))
 
 if __name__ == '__main__':
     main()
