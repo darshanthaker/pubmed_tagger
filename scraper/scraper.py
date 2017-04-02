@@ -17,11 +17,9 @@ from database import MongoWrapper
 class GenericScraper(object):
 
     def __init__(self):
-        self.mongodb = MongoWrapper('test_db')
-        # TODO: Remove the following line after testing!!
-        self.mongodb.clear_all()
+        pass
 
-    def wget(self, url, params, headers=None):
+    def wget(self, url, params={}, headers=None):
         encoded_params = urllib.urlencode(params)
         opener = urllib2.build_opener(urllib2.HTTPCookieProcessor())
         if headers is not None:
@@ -35,7 +33,7 @@ class GenericScraper(object):
         return resp, response.geturl()
 
     def wget_xml(self, url, params):
-        xml, _ = self.wget(url, params) 
+        xml, _ = self.wget(url, params=params) 
         if xml is None:
             return None
         root = ET.fromstring(xml)
@@ -50,29 +48,51 @@ class GenericScraper(object):
                 return href
 
     def parse_pdf(self, pdf):
-        doc = slate.PDF(pdf)
+        pdf = StringIO(pdf)
+        try:
+            doc = slate.PDF(pdf)
+        except:
+            return False
         doc = ' '.join(doc)
         entry = {'data': doc}
-        self.mongodb.add_entry(entry)
+        return True
+        #self.mongodb.add_entry(entry)
 
 class ElsevierScraper(GenericScraper):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, mongodb):
+        self.mongodb = mongodb
         self.base_url = 'https://api.elsevier.com/content/article/pii/{}'    
         self.api_key = 'c989efb8e4d2c0474a3c4fa3007d2b72'
 
     def get_pii(self, url):
-        pass
+        start_index = url.find('pii/') + len('pii/')
+        if start_index == -1:
+            return None
+        return url[start_index:]
 
     def parse_url(self, url):
-        assert 'elsevier' in url
+        if 'elsevier' not in url:
+            return False
         pii = self.get_pii(url)
+        base_url = self.base_url.format(pii)
+        if pii is None:
+            return False
+        headers = [('X-ELS-APIKey', self.api_key), ('Accept', 'application/pdf')]
+        response, _ = self.wget(base_url, headers=headers)
+        print("Added: {}".format(url))
+        if self.parse_pdf(response) == False:
+            return True
+        else:
+            return True
 
 class NCBIScraper(GenericScraper):
 
     def __init__(self, db):
-        super(NCBIScraper, self).__init__()
+        self.mongodb = MongoWrapper('test_db')
+        # TODO: Remove the following line after testing!!
+        self.mongodb.clear_all()
+        self.elsevier_scraper = ElsevierScraper(self.mongodb)
         self.db = db
         self.successful = 0
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
@@ -137,37 +157,53 @@ class NCBIScraper(GenericScraper):
             id, url = self.parse_url_set(url_set)
             if url is None:
                 continue
-            self.parse_url(url)
+            if 'elsevier' in url:
+                if self.elsevier_scraper.parse_url(url):
+                    self.successful += 1
+                continue
+            if self.parse_url(url):
+                self.successful += 1
+
+    def equivalent_urlschemes(self, href, scheme):
+        if href.startswith(scheme) or href.startswith('http'):
+            return True
+        else:
+            return False
 
     def parse_url(self, url):
-        response, redirect_url = self.wget(url, {})
+        response, redirect_url = self.wget(url)
         if response is None:
-            return
+            return False
         href = None
         try:
             href = self.parse_html(response)
         except UnicodeDecodeError:
             set_trace()
         parsed_url = urlparse(redirect_url)
-        final_url = '{uri.scheme}://{uri.netloc}/'.format(uri=parsed_url)
+        final_url = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_url)
         if href is None:
             print("Couldn't handle this URL :( : {}".format(redirect_url))
-            return
-        if not href.startswith(final_url) and \
-                not href.startswith(parsed_url.scheme):
-            final_url += href 
+            return False
+        #if not href.startswith(final_url) and \
+        if not self.equivalent_urlschemes(href, parsed_url.scheme):
+            if not href.startswith('/'):
+                final_url += '/' + href
+            else:
+                final_url += href 
         else:
             final_url = href
         try:
             req = requests.get(final_url)
         except requests.exceptions.ConnectionError as e:
             print("Connection Error in getting pdf from {}".format(final_url))
-            return
-        pdf = StringIO(req.content)
-        print("Added: {}".format(final_url))
-        self.successful += 1
-        #self.parse_pdf(pdf)
+            return False
 
+        print("Added: {}".format(final_url))
+        if self.parse_pdf(req.content) == False:
+            return True
+        else:
+            return True
+        
     def parse_url_set(self, url_set):
         id = self.bfs_find(url_set, 'Id').text
         url = self.bfs_find(url_set, 'Url')
