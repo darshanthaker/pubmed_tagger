@@ -42,10 +42,15 @@ class GenericScraper(object):
     def parse_html(self, data):
         soup = BeautifulSoup(data, 'lxml')
         links = soup.find_all('a')
+        hrefs = list()
         for link in links:
             href = link.get('href')
-            if href is not None and 'pdf' in href:
-                return href
+            if href is not None and 'pdf' in href and 'epdf' not in href:
+                hrefs.append(href)
+        if len(hrefs) > 1:
+            print(hrefs)
+        if len(hrefs) != 0:
+            return hrefs[0]
 
     def parse_pdf(self, pdf):
         pdf = StringIO(pdf)
@@ -160,8 +165,10 @@ class NCBIScraper(GenericScraper):
             if 'elsevier' in url:
                 if self.elsevier_scraper.parse_url(url):
                     self.successful += 1
-                continue
-            if self.parse_url(url):
+            elif 'wiley' in url:
+                if self.wiley_scraper.parse_url(url):
+                    self.successful += 1
+            elif self.parse_url(url):
                 self.successful += 1
 
     def equivalent_urlschemes(self, href, scheme):
@@ -199,6 +206,12 @@ class NCBIScraper(GenericScraper):
             return False
 
         print("Added: {}".format(final_url))
+        pdf = StringIO(req.content)
+        try:
+            doc = slate.PDF(pdf)
+        except:
+            set_trace()
+            return False
         if self.parse_pdf(req.content) == False:
             return True
         else:
