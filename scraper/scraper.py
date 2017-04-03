@@ -39,29 +39,36 @@ class GenericScraper(object):
         root = ET.fromstring(xml)
         return root
 
-    def parse_html(self, data):
+    # exclude_words is a manually identified list of edge cases.
+    def parse_html(self, data, primary_tag='a', secondary_tag='href', \
+            include_words=['pdf'], exclude_words=['epdf', 'pdf+html']):
         soup = BeautifulSoup(data, 'lxml')
-        links = soup.find_all('a')
-        hrefs = list()
+        links = soup.find_all(primary_tag)
+        tags = list()
         for link in links:
-            href = link.get('href')
-            if href is not None and 'pdf' in href and 'epdf' not in href:
-                hrefs.append(href)
-        if len(hrefs) > 1:
-            print(hrefs)
-        if len(hrefs) != 0:
-            return hrefs[0]
+            tag = link.get(secondary_tag)
+            if tag is None:
+                continue
+            include = all([x in tag for x in include_words])
+            exclude = all([x not in tag for x in exclude_words])
+            if include and exclude:
+                tags.append(tag)
+        #if len(tags) > 1:
+        #    print(tags)
+        if len(tags) != 0:
+            return tags[0]
 
-    def parse_pdf(self, pdf):
+    def parse_pdf(self, pdf, mongodb):
         pdf = StringIO(pdf)
         try:
             doc = slate.PDF(pdf)
         except:
+            set_trace()
             return False
         doc = ' '.join(doc)
         entry = {'data': doc}
         return True
-        #self.mongodb.add_entry(entry)
+        #mongodb.add_entry(entry)
 
 class ElsevierScraper(GenericScraper):
 
@@ -86,10 +93,33 @@ class ElsevierScraper(GenericScraper):
         headers = [('X-ELS-APIKey', self.api_key), ('Accept', 'application/pdf')]
         response, _ = self.wget(base_url, headers=headers)
         print("Added: {}".format(url))
-        if self.parse_pdf(response) == False:
-            return True
-        else:
-            return True
+        return self.parse_pdf(response, self.mongodb)
+
+class WileyScraper(GenericScraper):
+
+    def __init__(self, mongodb):
+        self.mongodb = mongodb
+
+    def parse_url(self, url):
+        if 'wiley' not in url:
+            return False
+        response, _ = self.wget(url)
+        if response is None:
+            return False
+        pdf_href = self.parse_html(response)
+        if pdf_href is None:
+            return False
+        response, _ = self.wget(pdf_href)  
+        if response is None:
+            return False
+        pdf_href = self.parse_html(response, primary_tag='iframe', secondary_tag='src')
+        if pdf_href is None:
+            return False
+        response, _ = self.wget(pdf_href)
+        if response is None:
+            return False
+        print("Added: {}".format(url))
+        return self.parse_pdf(response, self.mongodb)
 
 class NCBIScraper(GenericScraper):
 
@@ -98,6 +128,7 @@ class NCBIScraper(GenericScraper):
         # TODO: Remove the following line after testing!!
         self.mongodb.clear_all()
         self.elsevier_scraper = ElsevierScraper(self.mongodb)
+        self.wiley_scraper = WileyScraper(self.mongodb)
         self.db = db
         self.successful = 0
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
@@ -165,10 +196,15 @@ class NCBIScraper(GenericScraper):
             if 'elsevier' in url:
                 if self.elsevier_scraper.parse_url(url):
                     self.successful += 1
-            elif 'wiley' in url:
-                if self.wiley_scraper.parse_url(url):
+                continue
+            _, redirect_url = self.wget(url) # Get redirect URL
+            if redirect_url is None:
+                continue
+            if 'wiley' in redirect_url:
+                if self.wiley_scraper.parse_url(redirect_url):
                     self.successful += 1
-            elif self.parse_url(url):
+                continue
+            if self.parse_url(url):
                 self.successful += 1
 
     def equivalent_urlschemes(self, href, scheme):
@@ -207,15 +243,7 @@ class NCBIScraper(GenericScraper):
 
         print("Added: {}".format(final_url))
         pdf = StringIO(req.content)
-        try:
-            doc = slate.PDF(pdf)
-        except:
-            set_trace()
-            return False
-        if self.parse_pdf(req.content) == False:
-            return True
-        else:
-            return True
+        return self.parse_pdf(req.content, self.mongodb)
         
     def parse_url_set(self, url_set):
         id = self.bfs_find(url_set, 'Id').text
