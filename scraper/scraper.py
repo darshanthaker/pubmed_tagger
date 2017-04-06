@@ -3,14 +3,15 @@ import sys
 #    raise Exception("Program must be run with Python3. Rerun please.")
 import urllib2
 import urllib
-import slate
+import textract
 from urlparse import urlparse
 import requests
 import xml.etree.ElementTree as ET
 from HTMLParser import HTMLParser
 from bs4 import BeautifulSoup
-from cStringIO import StringIO
+import tempfile
 from pdb import set_trace
+from util import timing
 
 from database import MongoWrapper
 
@@ -58,15 +59,18 @@ class GenericScraper(object):
         if len(tags) != 0:
             return tags[0]
 
+    @timing
     def parse_pdf(self, pdf, mongodb):
-        pdf = StringIO(pdf)
+        temp = tempfile.NamedTemporaryFile(suffix='.pdf')
+        temp.write(pdf)
         try:
-            doc = slate.PDF(pdf)
+            doc = textract.process(temp.name)
         except:
             set_trace()
+            temp.close()
             return False
-        doc = ' '.join(doc)
         entry = {'data': doc}
+        temp.close()
         return True
         #mongodb.add_entry(entry)
 
@@ -242,7 +246,6 @@ class NCBIScraper(GenericScraper):
             return False
 
         print("Added: {}".format(final_url))
-        pdf = StringIO(req.content)
         return self.parse_pdf(req.content, self.mongodb)
         
     def parse_url_set(self, url_set):
