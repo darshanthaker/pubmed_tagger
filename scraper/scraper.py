@@ -11,9 +11,10 @@ from HTMLParser import HTMLParser
 from bs4 import BeautifulSoup
 import tempfile
 from pdb import set_trace
-from util import timing
 
 from database import MongoWrapper
+from query import craft_query
+from util import timing
 
 class GenericScraper(object):
 
@@ -28,7 +29,7 @@ class GenericScraper(object):
         try:
             response = opener.open(url + encoded_params)
         except Exception as e: 
-            print("HTTP Error {}. URL: {}".format(e, url + encoded_params))
+            print("{}. URL: {}".format(e, url + encoded_params))
             return None, None
         resp = response.read()
         return resp, response.geturl()
@@ -59,20 +60,25 @@ class GenericScraper(object):
         if len(tags) != 0:
             return tags[0]
 
+    def add_to_db(self, data, mongodb):
+        # mongodb.add_entry(data)
+        return True
+
     @timing
     def parse_pdf(self, pdf, mongodb):
         temp = tempfile.NamedTemporaryFile(suffix='.pdf')
         temp.write(pdf)
+        temp.flush()
         try:
             doc = textract.process(temp.name)
         except:
-            set_trace()
+            print("PDF Parsing failed!")
             temp.close()
             return False
-        entry = {'data': doc}
         temp.close()
+        entry = {'data': doc}
+        self.add_to_db(entry, mongodb)
         return True
-        #mongodb.add_entry(entry)
 
 class ElsevierScraper(GenericScraper):
 
@@ -94,10 +100,11 @@ class ElsevierScraper(GenericScraper):
         base_url = self.base_url.format(pii)
         if pii is None:
             return False
-        headers = [('X-ELS-APIKey', self.api_key), ('Accept', 'application/pdf')]
+        headers = [('X-ELS-APIKey', self.api_key), ('Accept', 'text/plain')]
         response, _ = self.wget(base_url, headers=headers)
         print("Added: {}".format(url))
-        return self.parse_pdf(response, self.mongodb)
+        entry = {'data': response}
+        return self.add_to_db(entry, self.mongodb)
 
 class WileyScraper(GenericScraper):
 
@@ -267,7 +274,8 @@ class NCBIScraper(GenericScraper):
 
 def main():
     scraper = NCBIScraper('pubmed')
-    scraper.search({'term': 'stillbirth', 'retmax': 100})
+    query = craft_query('queries/stillbirth')
+    scraper.search({'term': query, 'retmax': 100})
     print("Retrieved {}/100 successfully".format(scraper.successful))
 
 if __name__ == '__main__':

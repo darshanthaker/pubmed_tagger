@@ -15,8 +15,9 @@ def timing(func):
 
     def wrapper(*arg):
         t1 = time.time()
-        func(*arg)
+        ret_val = func(*arg)
         t2 = time.time()
         print("{} took {} seconds".format(func.__name__, t2 - t1))
+        return ret_val
 
     return wrapper
