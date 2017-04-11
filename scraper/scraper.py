@@ -41,9 +41,16 @@ class GenericScraper(object):
         root = ET.fromstring(xml)
         return root
 
+    def equivalent_urlschemes(self, href, scheme):
+        if href.startswith(scheme) or href.startswith('http'):
+            return True
+        else:
+            return False
+
     # exclude_words is a manually identified list of edge cases.
     def parse_html(self, data, primary_tag='a', secondary_tag='href', \
-            include_words=['pdf'], exclude_words=['epdf', 'pdf+html']):
+            include_words=['pdf'], exclude_words=['epdf', 'pdf+html'], \
+            download_words=['download pdf', 'pdf']):
         soup = BeautifulSoup(data, 'lxml')
         links = soup.find_all(primary_tag)
         tags = list()
@@ -53,18 +60,20 @@ class GenericScraper(object):
                 continue
             include = all([x in tag for x in include_words])
             exclude = all([x not in tag for x in exclude_words])
-            if include and exclude:
-                tags.append(tag)
+            download = any([x in link.get_text().lower() for x in download_words])
+            if (include and exclude) or download:
+                tags.append((tag, download))
+        # Prefer links that contain keywords in download_words.
+        tags = sorted(tags, key=lambda x: not x[1])
         #if len(tags) > 1:
         #    print(tags)
         if len(tags) != 0:
-            return tags[0]
+            return tags[0][0]
 
     def add_to_db(self, data, mongodb):
         # mongodb.add_entry(data)
         return True
 
-    @timing
     def parse_pdf(self, pdf, mongodb):
         temp = tempfile.NamedTemporaryFile(suffix='.pdf')
         temp.write(pdf)
@@ -132,6 +141,40 @@ class WileyScraper(GenericScraper):
         print("Added: {}".format(url))
         return self.parse_pdf(response, self.mongodb)
 
+class ASCOScraper(GenericScraper):
+
+    def __init__(self, mongodb):
+        self.mongodb = mongodb
+
+    def parse_url(self, url):
+        if 'asco' not in url:
+            return False
+        response, redirect_url = self.wget(url)
+        if response is None:
+            return False
+        href = self.parse_html(response)
+        href = href.replace('pdf', 'pdfdirect')
+        parsed_url = urlparse(redirect_url)
+        final_url = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_url)
+        if href is None:
+            print("Couldn't handle this URL :( : {}".format(redirect_url))
+            return False
+        if not self.equivalent_urlschemes(href, parsed_url.scheme):
+            if not href.startswith('/'):
+                final_url += '/' + href
+            else:
+                final_url += href 
+        else:
+            final_url = href
+        try:
+            req = requests.get(final_url)
+        except requests.exceptions.ConnectionError as e:
+            print("Connection Error in getting pdf from {}".format(final_url))
+            return False
+
+        print("Added: {}".format(final_url))
+        return self.parse_pdf(req.content, self.mongodb)
+        
 class NCBIScraper(GenericScraper):
 
     def __init__(self, db):
@@ -140,6 +183,7 @@ class NCBIScraper(GenericScraper):
         self.mongodb.clear_all()
         self.elsevier_scraper = ElsevierScraper(self.mongodb)
         self.wiley_scraper = WileyScraper(self.mongodb)
+        self.asco_scraper = ASCOScraper(self.mongodb)
         self.db = db
         self.successful = 0
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
@@ -208,6 +252,10 @@ class NCBIScraper(GenericScraper):
                 if self.elsevier_scraper.parse_url(url):
                     self.successful += 1
                 continue
+            if 'asco' in url:
+                if self.asco_scraper.parse_url(url):
+                    self.successful += 1
+                continue
             _, redirect_url = self.wget(url) # Get redirect URL
             if redirect_url is None:
                 continue
@@ -217,12 +265,6 @@ class NCBIScraper(GenericScraper):
                 continue
             if self.parse_url(url):
                 self.successful += 1
-
-    def equivalent_urlschemes(self, href, scheme):
-        if href.startswith(scheme) or href.startswith('http'):
-            return True
-        else:
-            return False
 
     def parse_url(self, url):
         response, redirect_url = self.wget(url)
@@ -272,6 +314,7 @@ class NCBIScraper(GenericScraper):
             return None, None
         return year, abstract_text
 
+@timing
 def main():
     scraper = NCBIScraper('pubmed')
     query = craft_query('queries/stillbirth')
