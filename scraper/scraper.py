@@ -248,12 +248,28 @@ class NCBIScraper(GenericScraper):
         self.ovid_scraper = OvidScraper(self.mongodb)
         self.db = db
         self.successful = 0
+        self.total = 0
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
 
     def search(self, query_params):
         assert isinstance(query_params, dict)
         base_url = self.base_url.format('esearch')
         query_params['db'] = self.db
+        query_params['usehistory'] = 'y'
+        eSearchResult = self.wget_xml(base_url, query_params)
+        if eSearchResult is None:
+            return
+        count = int(eSearchResult.find('Count').text)
+        webenv = eSearchResult.find('WebEnv').text
+        retmax = 400
+        for i in range(0, count, retmax):
+            query_params['WebEnv'] = webenv
+            query_params['retstart'] = i   
+            query_params['retmax'] = retmax
+            self.limited_search(query_params)
+    
+    def limited_search(self, query_params):
+        base_url = self.base_url.format('esearch')
         eSearchResult = self.wget_xml(base_url, query_params)
         if eSearchResult is None:
             return
@@ -310,6 +326,9 @@ class NCBIScraper(GenericScraper):
             id, url = self.parse_url_set(url_set)
             if url is None:
                 continue
+            self.total += 1
+            if self.total == 100:
+                print("STATUS UPDATE: {}/{}".format(self.successful, self.total))
             if 'elsevier' in url:
                 if self.elsevier_scraper.parse_url(url):
                     self.successful += 1
@@ -386,8 +405,8 @@ class NCBIScraper(GenericScraper):
 def main():
     scraper = NCBIScraper('pubmed')
     query = craft_query('queries/stillbirth')
-    scraper.search({'term': query, 'retmax': 100})
-    print("Retrieved {}/100 successfully".format(scraper.successful))
+    scraper.search({'term': query})
+    print("Retrieved {}/{} successfully".format(scraper.successful, scraper.total))
 
 if __name__ == '__main__':
     main()
