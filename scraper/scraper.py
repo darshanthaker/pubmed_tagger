@@ -174,8 +174,69 @@ class ASCOScraper(GenericScraper):
 
         print("Added: {}".format(final_url))
         return self.parse_pdf(req.content, self.mongodb)
+
+class OvidScraper(GenericScraper):
+
+    def __init__(self, mongodb):
+        self.mongodb = mongodb
+
+    def get_ovid_from_line(self, link):
+        url = None
+        ovid = 'ovidFullTextUrlForButtons'
+        for line in link.get_text().splitlines():
+            if ovid in line:
+                start = line.find('"')   
+                end = line.find('"', start + 1)
+                url = line[start + 1:end]
+                break
+        return url 
+
+    def get_ovid_url(self, data):
+        soup = BeautifulSoup(data, 'lxml')
+        links = soup.find_all('script')
+        ovid = 'ovidFullTextUrlForButtons'
+        for link in links:
+            if ovid not in link.get_text():
+                continue
+            url = self.get_ovid_from_line(link)
+            if url is not None:
+                return url 
+
+    def parse_url(self, url):
+        if 'ovid' not in url:
+            return False
+        response, _ = self.wget(url) 
+        if response is None:
+            return False
+        ovid_url = self.get_ovid_url(response)
+        if ovid_url is None:
+            return False
+        response, redirect_url = self.wget(ovid_url)
+        href = self.parse_html(response, primary_tag='iframe', secondary_tag='src')
+
+        parsed_url = urlparse(redirect_url)
+        final_url = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_url)
+        if href is None:
+            print("Couldn't handle this URL :( : {}".format(redirect_url))
+            return False
+        if not self.equivalent_urlschemes(href, parsed_url.scheme):
+            if not href.startswith('/'):
+                final_url += '/' + href
+            else:
+                final_url += href 
+        else:
+            final_url = href
+        try:
+            req = requests.get(final_url)
+        except requests.exceptions.ConnectionError as e:
+            print("Connection Error in getting pdf from {}".format(final_url))
+            return False
+
+        print("Added: {}".format(final_url))
+        return self.parse_pdf(req.content, self.mongodb)
         
 class NCBIScraper(GenericScraper):
+
 
     def __init__(self, db):
         self.mongodb = MongoWrapper('test_db')
@@ -184,6 +245,7 @@ class NCBIScraper(GenericScraper):
         self.elsevier_scraper = ElsevierScraper(self.mongodb)
         self.wiley_scraper = WileyScraper(self.mongodb)
         self.asco_scraper = ASCOScraper(self.mongodb)
+        self.ovid_scraper = OvidScraper(self.mongodb)
         self.db = db
         self.successful = 0
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
@@ -263,6 +325,10 @@ class NCBIScraper(GenericScraper):
                 if self.wiley_scraper.parse_url(redirect_url):
                     self.successful += 1
                 continue
+            if 'ovid' in redirect_url:
+                if self.ovid_scraper.parse_url(redirect_url):
+                    self.successful += 1
+                continue
             if self.parse_url(url):
                 self.successful += 1
 
@@ -295,6 +361,8 @@ class NCBIScraper(GenericScraper):
             return False
 
         print("Added: {}".format(final_url))
+        #if not self.parse_pdf(req.content, self.mongodb):
+        #    set_trace()
         return self.parse_pdf(req.content, self.mongodb)
         
     def parse_url_set(self, url_set):
