@@ -202,6 +202,9 @@ class OvidScraper(GenericScraper):
             if url is not None:
                 return url 
 
+    def ovidweb(ovid_url):
+        pass
+
     def parse_url(self, url):
         if 'ovid' not in url:
             return False
@@ -211,6 +214,8 @@ class OvidScraper(GenericScraper):
         ovid_url = self.get_ovid_url(response)
         if ovid_url is None:
             return False
+        if 'ovidweb' in ovid_url:
+            return ovidweb(ovid_url)
         response, redirect_url = self.wget(ovid_url)
         href = self.parse_html(response, primary_tag='iframe', secondary_tag='src')
 
@@ -247,8 +252,14 @@ class NCBIScraper(GenericScraper):
         self.asco_scraper = ASCOScraper(self.mongodb)
         self.ovid_scraper = OvidScraper(self.mongodb)
         self.db = db
+        self.all_scrapers = {'elsevier': (self.elsevier_scraper, False), \
+                             'asco': (self.asco_scraper, False), \
+                             'wiley': (self.wiley_scraper, True), \
+                             'ovid': (self.ovid_scraper, True), \
+                             '': (self, False)} # Default scraper.
         self.successful = 0
         self.total = 0
+        self.id_to_journals = dict()
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/{}.fcgi?"
 
     def search(self, query_params):
@@ -277,7 +288,7 @@ class NCBIScraper(GenericScraper):
         id_list = list()
         for ids in id_list_tag:
             id_list.append(ids.text)
-        self.fetch_abstracts(id_list)
+        journals = self.fetch_abstracts(id_list)
         self.fetch_external_links(id_list)
 
     def bfs_find(self, root, to_find):
@@ -302,13 +313,34 @@ class NCBIScraper(GenericScraper):
         i = 0
         for article in pubmedArticleSet:
             if article.tag == 'PubmedArticle':
-                year, abstract_text = self.parse_article(article)
-                if year is None and abstract_text is None:
+                [_, abstract_text, journal] = self.parse_article(article)
+                if abstract_text is None and journal is None:
+                    print("COULDNT FIND")
                     continue
+                print("journal: {}".format(journal))
                 data[id_list[i]] = abstract_text
+                self.id_to_journals[id_list[i]] = journal
             i += 1
         #print(data.keys())
+        return journals
 
+    def try_all_scrapers(self, id, url):
+        _, redirect_url = self.wget(url) # Get redirect URL
+        for (keyword, val) in self.all_scrapers:
+            scraper = val[0]
+            use_redirect = val[1]
+            if use_redirect:
+                new_url = redirect_url
+            else:
+                new_url = url
+            if new_url is None:
+                return
+            if keyword in new_url:
+                if self.scraper.parse_url(new_url):
+                    self.successful += 1
+                    print("Successful journal: {}".format(self.id_to_journals[id]))
+                return
+         
     def fetch_external_links(self, id_list):
         base_url = self.base_url.format('elink')
         data = dict()
@@ -329,6 +361,8 @@ class NCBIScraper(GenericScraper):
             self.total += 1
             if self.total == 100:
                 print("STATUS UPDATE: {}/{}".format(self.successful, self.total))
+            self.try_all_scrapers(id, url)
+"""            
             if 'elsevier' in url:
                 if self.elsevier_scraper.parse_url(url):
                     self.successful += 1
@@ -337,7 +371,6 @@ class NCBIScraper(GenericScraper):
                 if self.asco_scraper.parse_url(url):
                     self.successful += 1
                 continue
-            _, redirect_url = self.wget(url) # Get redirect URL
             if redirect_url is None:
                 continue
             if 'wiley' in redirect_url:
@@ -350,6 +383,7 @@ class NCBIScraper(GenericScraper):
                 continue
             if self.parse_url(url):
                 self.successful += 1
+"""
 
     def parse_url(self, url):
         response, redirect_url = self.wget(url)
@@ -393,13 +427,19 @@ class NCBIScraper(GenericScraper):
 
     def parse_article(self, article):
         try:
-            date_revised_tag = self.bfs_find(article, 'DateRevised')
-            year = date_revised_tag[0].text
-            abstract_text_tag = self.bfs_find(article, 'AbstractText')
-            abstract_text = abstract_text_tag.text
+            journal_tag = self.bfs_find(article, 'Journal')
+            journal_name = self.bfs_find(journal_tag, 'Title').text
         except:
-            return None, None
-        return year, abstract_text
+            journal_name = None
+        try:
+            year = self.bfs_find(article, 'DateRevised')[0].text
+        except:
+            year = None
+        try:
+            abstract_text = self.bfs_find(article, 'AbstractText').text
+        except:
+            abstract_text = None
+        return [year, abstract_text, journal_name]
 
 @timing
 def main():
